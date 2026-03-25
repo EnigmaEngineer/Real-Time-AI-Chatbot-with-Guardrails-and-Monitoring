@@ -1,0 +1,371 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 2,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "── SLO STATUS ──",
+      "type": "text",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 0 },
+      "options": { "mode": "markdown", "content": "### SLO Burn Rate &nbsp; | &nbsp; Availability: 99.9% &nbsp; | &nbsp; Latency p95 < 800ms" }
+    },
+    {
+      "title": "Availability Error Budget Remaining",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 2 },
+      "targets": [
+        {
+          "expr": "1 - (sum(rate(chatbot_slo_errors_total[1h])) / sum(rate(chatbot_requests_total[1h])))",
+          "legendFormat": "availability"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0.99,
+          "max": 1,
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.995 },
+              { "color": "green", "value": 0.999 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Latency SLO Compliance",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 2 },
+      "targets": [
+        {
+          "expr": "1 - (sum(rate(chatbot_slo_latency_violations_total[1h])) / sum(rate(chatbot_requests_total[1h])))",
+          "legendFormat": "% under 800ms"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0.9,
+          "max": 1,
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.93 },
+              { "color": "green", "value": 0.95 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "SLO Burn Rate (Availability)",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 2 },
+      "targets": [
+        {
+          "expr": "(sum(rate(chatbot_slo_errors_total[5m])) / sum(rate(chatbot_requests_total[5m]))) / 0.001",
+          "legendFormat": "5m burn rate"
+        },
+        {
+          "expr": "(sum(rate(chatbot_slo_errors_total[1h])) / sum(rate(chatbot_requests_total[1h]))) / 0.001",
+          "legendFormat": "1h burn rate"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 14.4 }
+            ]
+          },
+          "custom": { "thresholdsStyle": { "mode": "line" } }
+        }
+      }
+    },
+    {
+      "title": "Active Alerts",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 2 },
+      "targets": [
+        { "expr": "ALERTS{alertstate='firing', severity='critical'}", "legendFormat": "{{alertname}}" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "red", "mode": "fixed" },
+          "noValue": "0 alerts"
+        }
+      }
+    },
+    {
+      "title": "── REQUEST VOLUME & LATENCY ──",
+      "type": "text",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 8 },
+      "options": { "mode": "markdown", "content": "" }
+    },
+    {
+      "title": "Request Volume (req/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 10 },
+      "targets": [
+        { "expr": "sum(rate(chatbot_requests_total[5m]))", "legendFormat": "total req/s" },
+        { "expr": "sum(rate(chatbot_requests_total{status='ok'}[5m]))", "legendFormat": "success" },
+        { "expr": "sum(rate(chatbot_requests_total{status='blocked'}[5m]))", "legendFormat": "blocked" },
+        { "expr": "sum(rate(chatbot_requests_total{status='rate_limited'}[5m]))", "legendFormat": "rate-limited" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+    {
+      "title": "Request Latency (p50 / p95 / p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 10 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(chatbot_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(chatbot_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum(rate(chatbot_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.8 },
+              { "color": "red", "value": 2.0 }
+            ]
+          },
+          "custom": { "thresholdsStyle": { "mode": "dashed" } }
+        }
+      }
+    },
+    {
+      "title": "Error Rate by Type",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 10 },
+      "targets": [
+        { "expr": "rate(chatbot_errors_total[5m])", "legendFormat": "{{ error_type }}" }
+      ],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "red", "mode": "fixed" } } }
+    },
+    {
+      "title": "── TOKEN USAGE & COST ──",
+      "type": "text",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 18 },
+      "options": { "mode": "markdown", "content": "" }
+    },
+    {
+      "title": "Token Throughput (tokens/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 20 },
+      "targets": [
+        { "expr": "sum(rate(chatbot_tokens_total{direction='input'}[5m])) by (model)", "legendFormat": "in: {{ model }}" },
+        { "expr": "sum(rate(chatbot_tokens_total{direction='output'}[5m])) by (model)", "legendFormat": "out: {{ model }}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "title": "Cost per Conversation ($)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 20 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(chatbot_cost_per_conversation_dollars_bucket[5m])) by (le, model))", "legendFormat": "p50 {{ model }}" },
+        { "expr": "histogram_quantile(0.95, sum(rate(chatbot_cost_per_conversation_dollars_bucket[5m])) by (le, model))", "legendFormat": "p95 {{ model }}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 5 } }
+    },
+    {
+      "title": "Cumulative Spend ($/hr)",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 20 },
+      "targets": [
+        {
+          "expr": "sum(rate(chatbot_cost_per_conversation_dollars_sum[1h])) * 3600",
+          "legendFormat": "$/hr"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2 } }
+    },
+    {
+      "title": "── GUARDRAILS ──",
+      "type": "text",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 28 },
+      "options": { "mode": "markdown", "content": "" }
+    },
+    {
+      "title": "Guardrail Triggers by Type",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 30 },
+      "targets": [
+        { "expr": "sum(rate(chatbot_guardrail_triggers_total[5m])) by (guard_type) * 60", "legendFormat": "{{ guard_type }}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "title": "Guardrail Violation Rate (% of requests)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 30 },
+      "targets": [
+        {
+          "expr": "sum(rate(chatbot_guardrail_triggers_total[5m])) / sum(rate(chatbot_requests_total[5m])) * 100",
+          "legendFormat": "violation %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 5 },
+              { "color": "red", "value": 10 }
+            ]
+          },
+          "custom": { "thresholdsStyle": { "mode": "line+area" } }
+        }
+      }
+    },
+    {
+      "title": "Output Confidence Distribution",
+      "type": "histogram",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 30 },
+      "targets": [
+        { "expr": "sum(rate(chatbot_output_confidence_bucket[5m])) by (le)", "legendFormat": "{{ le }}" }
+      ]
+    },
+    {
+      "title": "── A/B TEST PERFORMANCE ──",
+      "type": "text",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 38 },
+      "options": { "mode": "markdown", "content": "" }
+    },
+    {
+      "title": "A/B Variant Latency (p50)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 40 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(chatbot_ab_variant_duration_seconds_bucket[5m])) by (le, variant))",
+          "legendFormat": "{{ variant }}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "title": "A/B Variant Feedback Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 40 },
+      "targets": [
+        { "expr": "sum(rate(chatbot_ab_variant_feedback_total{rating='up'}[5m])) by (variant) * 60", "legendFormat": "👍 {{ variant }}" },
+        { "expr": "sum(rate(chatbot_ab_variant_feedback_total{rating='down'}[5m])) by (variant) * 60", "legendFormat": "👎 {{ variant }}" }
+      ]
+    },
+    {
+      "title": "A/B Assignment Split",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 40 },
+      "targets": [
+        { "expr": "sum(chatbot_ab_assignments_total) by (experiment, variant)", "legendFormat": "{{ experiment }}/{{ variant }}" }
+      ]
+    },
+    {
+      "title": "── DRIFT & INFRASTRUCTURE ──",
+      "type": "text",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 48 },
+      "options": { "mode": "markdown", "content": "" }
+    },
+    {
+      "title": "Drift KS Statistic",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 50 },
+      "targets": [
+        { "expr": "chatbot_drift_score", "legendFormat": "{{ metric_name }} ({{ direction }})" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.05 },
+              { "color": "red", "value": 0.1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Drift p-value",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 50 },
+      "targets": [
+        { "expr": "chatbot_drift_p_value", "legendFormat": "{{ metric_name }} ({{ direction }})" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 0.05 }
+            ]
+          },
+          "custom": { "thresholdsStyle": { "mode": "line" } }
+        }
+      }
+    },
+    {
+      "title": "Circuit Breaker / Connections",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 50 },
+      "targets": [
+        { "expr": "chatbot_circuit_breaker_state", "legendFormat": "CB {{ model }}" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "CLOSED", "color": "green" } } },
+            { "type": "value", "options": { "1": { "text": "OPEN", "color": "red" } } },
+            { "type": "value", "options": { "2": { "text": "HALF-OPEN", "color": "yellow" } } }
+          ]
+        }
+      }
+    },
+    {
+      "title": "WebSocket Connections",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 50 },
+      "targets": [
+        { "expr": "chatbot_active_websocket_connections", "legendFormat": "connections" }
+      ]
+    },
+    {
+      "title": "Rate Limit Bans / min",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 54 },
+      "targets": [
+        { "expr": "rate(chatbot_rate_limit_bans_total[5m]) * 60", "legendFormat": "bans/min" }
+      ]
+    },
+    {
+      "title": "User Feedback",
+      "type": "timeseries",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 54 },
+      "targets": [
+        { "expr": "sum(rate(chatbot_feedback_total{rating='up'}[5m])) * 60", "legendFormat": "👍" },
+        { "expr": "sum(rate(chatbot_feedback_total{rating='down'}[5m])) * 60", "legendFormat": "👎" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["chatbot", "llm", "slo"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "AI Chatbot Platform",
+  "uid": "chatbot-main",
+  "refresh": "30s"
+}

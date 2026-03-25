@@ -1,0 +1,44 @@
+replicaCount: 2
+
+image:
+  repository: chatbot-platform
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  metricsPort: 9090
+
+ingress:
+  enabled: true
+  host: chatbot.example.com
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/websocket-services: chatbot
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilization: 70
+
+env:
+  LLM_MOCK_MODE: "false"
+  CONFIG_PATH: /app/config.yaml
+
+secrets:
+  llmApiKey: ""
+  driftWebhookUrl: ""
+
+driftCronjob:
+  enabled: true
+  schedule: "*/5 * * * *"

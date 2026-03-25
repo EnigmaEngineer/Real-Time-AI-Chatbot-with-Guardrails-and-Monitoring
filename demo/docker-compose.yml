@@ -1,0 +1,66 @@
+# Demo stack: docker compose -f demo/docker-compose.yml up
+# Starts: FastAPI chatbot (mock LLM), Prometheus, Grafana, chat UI
+#
+# Access:
+#   Chat UI:    http://localhost:8080
+#   API:        http://localhost:8000/docs
+#   Grafana:    http://localhost:3000 (admin/admin)
+#   Prometheus: http://localhost:9091
+
+services:
+  chatbot:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+      - "9090:9090"
+    environment:
+      - LLM_MOCK_MODE=true
+      - CONFIG_PATH=config.yaml
+    volumes:
+      - chatbot-data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  chat-ui:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ../examples/chat.html:/usr/share/nginx/html/index.html:ro
+    depends_on:
+      chatbot:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    ports:
+      - "9091:9090"
+    volumes:
+      - ../deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../deploy/prometheus_alerts.yml:/etc/prometheus/prometheus_alerts.yml:ro
+    depends_on:
+      chatbot:
+        condition: service_healthy
+
+  grafana:
+    image: grafana/grafana:10.4.1
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - ../deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  chatbot-data:

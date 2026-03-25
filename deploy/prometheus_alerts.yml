@@ -1,0 +1,151 @@
+groups:
+  # ── SLO: Availability (99.9%) ──────────────────────────────────────────
+  - name: slo_availability
+    rules:
+      # Fast burn: 14.4× budget consumption over 5 minutes
+      # Catches hard-down scenarios within ~2 minutes
+      - alert: SLO_AvailabilityBudgetFastBurn
+        expr: |
+          (
+            sum(rate(chatbot_slo_errors_total[5m]))
+            / sum(rate(chatbot_requests_total[5m]))
+          ) > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: critical
+          slo: availability
+        annotations:
+          summary: "Availability SLO fast burn — error rate {{ $value | humanizePercentage }} over 5m"
+          description: >
+            Error ratio is {{ $value | humanizePercentage }} (budget: 0.1%).
+            At this rate the 12h error budget exhausts in under 50 minutes.
+          runbook_url: "https://wiki.internal/runbooks/chatbot-availability"
+
+      # Slow burn: 1× budget consumption over 1 hour
+      # Catches gradual degradation that wouldn't trip the fast burn
+      - alert: SLO_AvailabilityBudgetSlowBurn
+        expr: |
+          (
+            sum(rate(chatbot_slo_errors_total[1h]))
+            / sum(rate(chatbot_requests_total[1h]))
+          ) > (1.0 * 0.001)
+        for: 15m
+        labels:
+          severity: warning
+          slo: availability
+        annotations:
+          summary: "Availability SLO slow burn — error rate {{ $value | humanizePercentage }} over 1h"
+          description: >
+            Sustained error ratio of {{ $value | humanizePercentage }} for 15+ minutes.
+            Error budget will be fully consumed within the 12h window.
+
+  # ── SLO: Latency (95% < 800ms) ────────────────────────────────────────
+  - name: slo_latency
+    rules:
+      - alert: SLO_LatencyP95Spike
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(chatbot_request_duration_seconds_bucket[5m])) by (le)
+          ) > 2.0
+        for: 3m
+        labels:
+          severity: critical
+          slo: latency
+        annotations:
+          summary: "p95 latency at {{ $value | humanizeDuration }} (SLO target: 800ms)"
+          description: >
+            The 95th percentile request latency has exceeded 2 seconds for 3+
+            minutes.  Check LLM provider health, circuit breaker state, and
+            guardrail model load times.
+
+      - alert: SLO_LatencyBudgetBurn
+        expr: |
+          (
+            sum(rate(chatbot_slo_latency_violations_total[1h]))
+            / sum(rate(chatbot_requests_total[1h]))
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          slo: latency
+        annotations:
+          summary: "Latency SLO budget burn — {{ $value | humanizePercentage }} of requests over 800ms"
+          description: >
+            More than 5% of requests in the last hour exceeded the 800ms
+            latency target, consuming the latency SLO budget.
+
+  # ── Guardrail violation rate ───────────────────────────────────────────
+  - name: guardrail_alerts
+    rules:
+      - alert: GuardrailViolationRateHigh
+        expr: |
+          (
+            sum(rate(chatbot_guardrail_triggers_total[5m]))
+            / sum(rate(chatbot_requests_total[5m]))
+          ) > 0.10
+        for: 5m
+        labels:
+          severity: warning
+          component: guardrails
+        annotations:
+          summary: "Guardrail violation rate {{ $value | humanizePercentage }} exceeds 10% threshold"
+          description: >
+            More than 10% of requests are triggering guardrails.  This may
+            indicate a coordinated prompt injection attack, a change in
+            traffic source, or a guardrail configuration that's too sensitive.
+            Check the guard_type label breakdown in Grafana.
+
+      - alert: RateLimitBansSpiking
+        expr: rate(chatbot_rate_limit_bans_total[15m]) * 60 > 5
+        for: 5m
+        labels:
+          severity: info
+          component: guardrails
+        annotations:
+          summary: "Rate limit bans averaging {{ $value }}/min — possible abuse pattern"
+
+  # ── Drift detection ────────────────────────────────────────────────────
+  - name: drift_alerts
+    rules:
+      - alert: DriftDetected
+        expr: chatbot_drift_p_value < 0.05
+        for: 10m
+        labels:
+          severity: warning
+          component: drift
+        annotations:
+          summary: "Distribution drift on {{ $labels.metric_name }} ({{ $labels.direction }}), p={{ $value }}"
+          description: >
+            The KS-test p-value for {{ $labels.metric_name }}
+            ({{ $labels.direction }}) has been below 0.05 for 10+ minutes,
+            indicating a statistically significant shift in the data
+            distribution.  Investigate whether this is seasonal or
+            indicates model/data degradation.
+
+  # ── Infrastructure ─────────────────────────────────────────────────────
+  - name: infra_alerts
+    rules:
+      - alert: CircuitBreakerOpen
+        expr: chatbot_circuit_breaker_state == 1
+        for: 1m
+        labels:
+          severity: critical
+          component: llm
+        annotations:
+          summary: "Circuit breaker OPEN for model {{ $labels.model }}"
+          description: >
+            The LLM circuit breaker has been open for 1+ minute.  All
+            requests to {{ $labels.model }} are returning fallback responses.
+            Check provider status page and network connectivity.
+
+      - alert: NoTrafficReceived
+        expr: sum(rate(chatbot_requests_total[5m])) == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: infra
+        annotations:
+          summary: "No chat requests in the last 5 minutes"
+          description: >
+            Zero request throughput may indicate an ingress misconfiguration,
+            DNS failure, or deployment issue.

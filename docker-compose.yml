@@ -1,0 +1,47 @@
+services:
+  chatbot:
+    build: .
+    ports:
+      - "8000:8000"
+      - "9090:9090"
+    environment:
+      - LLM_MOCK_MODE=true
+      - CONFIG_PATH=config.yaml
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./deploy/prometheus_alerts.yml:/etc/prometheus/prometheus_alerts.yml
+    depends_on:
+      - chatbot
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./deploy/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+
+  grafana:
+    image: grafana/grafana:10.4.1
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus

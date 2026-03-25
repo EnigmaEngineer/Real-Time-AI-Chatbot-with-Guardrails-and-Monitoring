@@ -1,0 +1,177 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chatbot-api
+  labels:
+    app: chatbot
+    component: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: chatbot
+      component: api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: chatbot
+        component: api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      containers:
+        - name: chatbot
+          image: chatbot-platform:latest
+          ports:
+            - containerPort: 8000
+              name: http
+            - containerPort: 9090
+              name: metrics
+          env:
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: chatbot-secrets
+                  key: llm-api-key
+            - name: LLM_MOCK_MODE
+              value: "false"
+            - name: CONFIG_PATH
+              value: /app/config.yaml
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chatbot-api
+  labels:
+    app: chatbot
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 8000
+      protocol: TCP
+      name: http
+    - port: 9090
+      targetPort: 9090
+      protocol: TCP
+      name: metrics
+  selector:
+    app: chatbot
+    component: api
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: chatbot-api-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: chatbot-api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Pods
+      pods:
+        metric:
+          name: chatbot_active_websocket_connections
+        target:
+          type: AverageValue
+          averageValue: "50"
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chatbot-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/websocket-services: chatbot-api
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: chatbot.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: chatbot-api
+                port:
+                  number: 80
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: drift-alerting
+spec:
+  schedule: "0 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 24
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          containers:
+            - name: drift-check
+              image: chatbot-platform:latest
+              command: ["python", "-m", "src.drift.alert_cronjob"]
+              env:
+                - name: CHATBOT_API_URL
+                  value: "http://chatbot-api"
+                - name: DRIFT_ALERT_WEBHOOK
+                  valueFrom:
+                    secretKeyRef:
+                      name: chatbot-secrets
+                      key: drift-webhook-url
+                      optional: true
+                - name: DRIFT_KS_CRITICAL
+                  value: "0.15"
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 128Mi
+          restartPolicy: OnFailure
