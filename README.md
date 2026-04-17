@@ -1,6 +1,6 @@
 # AI Chatbot Platform
 
-Production-ready real-time AI chatbot with guardrails, monitoring, drift detection, and A/B testing.
+Production ready real time AI chatbot with guardrails, monitoring, drift detection and A/B testing.
 
 ## 5-Minute Quickstart
 
@@ -12,7 +12,7 @@ cd chatbot-platform
 make demo
 ```
 
-This starts four containers: the chatbot API (mock LLM), a chat UI, Prometheus, and Grafana. Wait ~15 seconds for the health check, then:
+This starts four containers: the chatbot API (mock LLM), a chat UI, Prometheus and Grafana. Wait ~15 seconds for the health check, then:
 
 ```bash
 # Chat via API
@@ -40,11 +40,11 @@ make demo-down
 
 ### What You'll See
 
-The API response includes `guardrail_violations`, `output_confidence`, and `latency_ms` on every request. The Grafana dashboard (auto-provisioned at `http://localhost:3000`) shows SLO gauges, request volume, guardrail triggers by type, A/B variant performance, token cost, and drift scores — all updating in real time.
+The API response includes `guardrail_violations`, `output_confidence`, and `latency_ms` on every request. The Grafana dashboard (auto-provisioned at `http://localhost:3000`) shows SLO gauges, request volume, guardrail triggers by type, A/B variant performance, token cost and drift scores,all updating in real time.
 
 ### API Key Authentication
 
-Set `CHATBOT_API_KEY` to require an `X-API-Key` header on all non-public endpoints:
+Set `CHATBOT_API_KEY` to require an `X-API-Key` header on all non public endpoints:
 
 ```bash
 export CHATBOT_API_KEY=my-secret-key
