@@ -24,6 +24,16 @@ llm:
   streaming:
     chunk_delay_ms: 0
 
+rag:
+  enabled: false
+  chunk_max_tokens: 512
+  chunk_overlap_tokens: 64
+  max_file_size_mb: 50
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+  collection_name: "documents"
+  top_k: 5
+  persist_directory: "data/chromadb"
+
 guardrails:
   profiles:
     strict:

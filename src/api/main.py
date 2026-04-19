@@ -1,9 +1,11 @@
 """FastAPI application with WebSocket + SSE streaming, REST endpoints, and Prometheus metrics."""
 
 import asyncio
+import os
 import time
 import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Request
@@ -84,12 +86,13 @@ _drift: DriftDetector | None = None
 _feedback: FeedbackStore | None = None
 _rate_limiter: ViolationRateLimiter | None = None
 _rpm_limiter: RPMRateLimiter | None = None
+_vectorstore = None  # VectorStore — lazy import to avoid heavy deps at module level
 _config: dict = {}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _llm, _ab_router, _drift, _feedback, _rate_limiter, _rpm_limiter, _config
+    global _llm, _ab_router, _drift, _feedback, _rate_limiter, _rpm_limiter, _vectorstore, _config
     _config = load_config()
 
     BUILD_INFO.info({"version": "1.0.0", "mock_mode": str(_config["llm"].get("mock_mode", False))})
@@ -101,6 +104,12 @@ async def lifespan(app: FastAPI):
     _feedback = FeedbackStore(_config)
     _rate_limiter = ViolationRateLimiter(_config)
     _rpm_limiter = RPMRateLimiter(_config)
+
+    # Vector store — only init if RAG is enabled (avoids loading embedding model when unused)
+    if _config.get("rag", {}).get("enabled", False):
+        from src.rag.vectorstore import VectorStore
+        _vectorstore = VectorStore(_config)
+        logger.info("VectorStore enabled")
 
     prom_port = _config.get("monitoring", {}).get("prometheus_port", 9090)
     try:
@@ -710,6 +719,102 @@ async def experiment_results(experiment: str):
 @app.get("/health")
 async def health():
     return {"status": "healthy", "mock_mode": _config["llm"].get("mock_mode", False)}
+
+
+# ── Document ingestion endpoints ──────────────────────────────────────────
+
+from fastapi import UploadFile, File
+import tempfile
+import shutil
+
+
+@app.post("/ingest")
+async def ingest_document(file: UploadFile = File(...)):
+    """Upload and ingest a document. Chunks are stored in ChromaDB if RAG is enabled."""
+    from src.rag.ingest import DocumentIngestor, SUPPORTED_EXTENSIONS
+
+    ext = Path(file.filename).suffix.lower() if file.filename else ""
+    if ext not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported format: {ext}. Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}",
+        )
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = tmp.name
+
+    try:
+        ingestor = DocumentIngestor(_config)
+        result = ingestor.ingest(tmp_path)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        os.unlink(tmp_path)
+
+    # Persist chunks to vector store if available
+    indexed = 0
+    document_id = f"doc_{file.filename}_{int(time.time())}"
+    if _vectorstore and result.chunks:
+        indexed = _vectorstore.add_chunks(result.chunks, document_id=document_id)
+
+    return {
+        "filename": file.filename,
+        "document_id": document_id,
+        "format": result.format,
+        "char_count": result.char_count,
+        "chunk_count": result.chunk_count,
+        "indexed": indexed,
+        "duration_ms": result.duration_ms,
+        "errors": result.errors,
+        "chunks": [
+            {
+                "index": c.index,
+                "token_count": c.token_count,
+                "text_preview": c.text[:200],
+            }
+            for c in result.chunks
+        ],
+    }
+
+
+@app.get("/rag/search")
+async def rag_search(q: str = Query(..., min_length=1), top_k: int = Query(default=5, ge=1, le=20)):
+    """Semantic search over ingested documents."""
+    if not _vectorstore:
+        raise HTTPException(status_code=503, detail="RAG not enabled. Set rag.enabled: true in config.")
+    results = _vectorstore.search(q, top_k=top_k)
+    return {
+        "query": q,
+        "results": [
+            {
+                "text": r.text[:500],
+                "score": r.score,
+                "document_id": r.document_id,
+                "chunk_index": r.chunk_index,
+            }
+            for r in results
+        ],
+    }
+
+
+@app.get("/rag/documents")
+async def rag_list_documents():
+    """List all ingested documents with chunk counts."""
+    if not _vectorstore:
+        raise HTTPException(status_code=503, detail="RAG not enabled.")
+    return {"documents": _vectorstore.list_documents(), "stats": _vectorstore.get_stats()}
+
+
+@app.delete("/rag/documents/{document_id}")
+async def rag_delete_document(document_id: str):
+    """Remove a document and all its chunks from the vector store."""
+    if not _vectorstore:
+        raise HTTPException(status_code=503, detail="RAG not enabled.")
+    deleted = _vectorstore.delete_document(document_id)
+    if deleted == 0:
+        raise HTTPException(status_code=404, detail=f"No chunks found for document '{document_id}'")
+    return {"deleted_chunks": deleted, "document_id": document_id}
 
 
 @app.get("/ratelimit/{user_id}")
