@@ -1,6 +1,6 @@
 FROM python:3.12-slim AS base
 
-RUN groupadd -r chatbot && useradd -r -g chatbot chatbot
+RUN groupadd -r chatbot && useradd -r -g chatbot -m -d /home/chatbot chatbot
 
 WORKDIR /app
 
@@ -11,9 +11,15 @@ RUN pip install --no-cache-dir pip --upgrade && \
 COPY src/ src/
 COPY config.yaml .
 
-RUN mkdir -p data && chown -R chatbot:chatbot /app
+RUN mkdir -p data /home/chatbot/.cache && \
+    chown -R chatbot:chatbot /app /home/chatbot
 
 USER chatbot
+
+ENV HOME=/home/chatbot \
+    TORCH_HOME=/home/chatbot/.cache/torch \
+    HF_HOME=/home/chatbot/.cache/huggingface \
+    XDG_CACHE_HOME=/home/chatbot/.cache
 
 EXPOSE 8000 9090
 

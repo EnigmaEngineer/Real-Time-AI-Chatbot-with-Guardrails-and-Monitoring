@@ -1,18 +1,18 @@
 # AI Chatbot Platform
 
-Production ready real time AI chatbot with guardrails, monitoring, drift detection and A/B testing.
+Production-ready real-time AI chatbot with guardrails, monitoring, drift detection, and A/B testing.
 
 ## 5-Minute Quickstart
 
 The only prerequisite is Docker. No GPU, no API keys, no Python install required.
 
 ```bash
-git clone https://github.com/your-org/chatbot-platform.git
+git clone https://github.com/EnigmaEngineer/chatbot-platform.git
 cd chatbot-platform
 make demo
 ```
 
-This starts four containers: the chatbot API (mock LLM), a chat UI, Prometheus and Grafana. Wait ~15 seconds for the health check, then:
+This starts four containers: the chatbot API (mock LLM), a chat UI, Prometheus, and Grafana. Wait ~15 seconds for the health check, then:
 
 ```bash
 # Chat via API
@@ -40,11 +40,11 @@ make demo-down
 
 ### What You'll See
 
-The API response includes `guardrail_violations`, `output_confidence`, and `latency_ms` on every request. The Grafana dashboard (auto-provisioned at `http://localhost:3000`) shows SLO gauges, request volume, guardrail triggers by type, A/B variant performance, token cost and drift scores,all updating in real time.
+The API response includes `guardrail_violations`, `output_confidence`, and `latency_ms` on every request. The Grafana dashboard (auto-provisioned at `http://localhost:3000`) shows SLO gauges, request volume, guardrail triggers by type, A/B variant performance, token cost, and drift scores — all updating in real time.
 
 ### API Key Authentication
 
-Set `CHATBOT_API_KEY` to require an `X-API-Key` header on all non public endpoints:
+Set `CHATBOT_API_KEY` to require an `X-API-Key` header on all non-public endpoints:
 
 ```bash
 export CHATBOT_API_KEY=my-secret-key
@@ -312,34 +312,69 @@ Applied the same observability rigor from our Airflow pipeline monitoring:
 3. **Grafana dashboards provisioned as code** — no manual dashboard creation. The dashboard JSON ships with the repo and auto-provisions on Grafana startup.
 4. **Drift detection as a CronJob** — runs every 5 minutes independently of the API, so monitoring doesn't compete with serving for resources.
 
+### Incident 5: Detoxify Cache PermissionError in Docker
+
+**Symptom:** Every `POST /chat/strict` request returned 500 Internal Server Error. Grafana panels showed "No data" because no request completed successfully.
+
+**Root cause:** The Dockerfile created the `chatbot` user with `useradd -r` (system user flag), which does not create a home directory. When Detoxify lazy-loaded its toxicity model on the first request, `torch.hub.load_state_dict_from_url` tried to write to `/home/chatbot/.cache/torch/hub/` — a path that didn't exist. The user lacked permission to create it, so every request crashed at the same line.
+
+**Traceback:**
+```
+PermissionError: [Errno 13] Permission denied: '/home/chatbot'
+  File "detoxify.py", line 41, in load_checkpoint
+    loaded = torch.hub.load_state_dict_from_url(checkpoint_path, map_location=device)
+```
+
+**Fix:** Three changes to the Dockerfile:
+1. Added `-m -d /home/chatbot` to `useradd` to create a real home directory
+2. Created `/home/chatbot/.cache` and set ownership before switching to the non-root user
+3. Set `TORCH_HOME`, `HF_HOME`, and `XDG_CACHE_HOME` environment variables to point at the writable cache directory
+
+**Lesson:** Every Dockerized ML app that lazy-loads models will eventually hit this. PyTorch, HuggingFace Transformers, and Detoxify all assume a writable `$HOME/.cache/`. If your Dockerfile uses a non-root user (which it should), you must explicitly create the cache path. This class of bug is invisible in local development (your user has a home dir) and only surfaces in containers.
+
 ## Project Structure
 
 ```
 ├── src/
-│   ├── api/main.py              # FastAPI + WebSocket endpoints
+│   ├── api/main.py              # FastAPI + WebSocket + SSE endpoints
 │   ├── guardrails/
-│   │   ├── input_guard.py       # PII, toxicity, injection
-│   │   └── output_guard.py      # Banned topics, hallucination
+│   │   ├── input_guard.py       # PII (regex + spaCy NER), toxicity, injection
+│   │   ├── output_guard.py      # Banned topics, confidence scoring
+│   │   ├── rate_limiter.py      # Per-user violation temp ban
+│   │   └── rpm_limiter.py       # Per-API-key RPM limiting
+│   ├── rag/
+│   │   ├── chunker.py           # Sentence-aware text splitting with overlap
+│   │   ├── ingest.py            # PDF/TXT/MD ingestion pipeline + CLI
+│   │   └── vectorstore.py       # ChromaDB wrapper with semantic search
 │   ├── llm/client.py            # Async client, circuit breaker, mock mode
 │   ├── abtesting/
 │   │   ├── router.py            # Variant assignment, experiment tracking
 │   │   └── stats.py             # Welch's t-test significance
 │   ├── drift/
-│   │   ├── detector.py          # KS test drift detection
-│   │   └── alert_cronjob.py     # CronJob alerting script
+│   │   ├── detector.py          # 6-signal KS test drift detection
+│   │   ├── classifiers.py       # Topic classifier, sentiment scorer
+│   │   ├── event_store.py       # Drift events SQLite persistence
+│   │   └── alert_cronjob.py     # Hourly K8s CronJob alerting
 │   ├── feedback/store.py        # SQLite feedback collection
 │   ├── monitoring/
 │   │   ├── metrics.py           # Prometheus counters, histograms, gauges
-│   │   └── logging.py           # JSON structured logging
+│   │   ├── logging.py           # JSON structured logging with trace context
+│   │   └── slo.py               # SLO definitions and burn-rate calculator
 │   └── config.py                # YAML loader with env var interpolation
 ├── evaluation/
 │   ├── backtest.py              # Replay conversations, compute win rates
 │   ├── ab_test_report.py        # Significance testing report
+│   ├── generate_dataset.py      # 200-conversation synthetic dataset generator
+│   ├── report.py                # HTML backtest report with Chart.js
+│   ├── locustfile.py            # Load testing (10-100 concurrent users)
 │   └── sample_conversations.jsonl
-├── examples/
-│   └── chat.html                # WebSocket chat client
 ├── tests/
-│   └── test_integration.py      # Guardrail, A/B, API tests
+│   ├── test_integration.py      # 87 guardrail, A/B, API, monitoring tests
+│   ├── test_rag_ingest.py       # 27 chunker + ingestion tests
+│   ├── test_vectorstore.py      # 19 ChromaDB search + retrieval tests
+│   └── fixtures/                # Sample docs for testing (TXT, MD, PDF)
+├── examples/
+│   └── chat.html                # WebSocket + SSE chat client
 ├── deploy/
 │   ├── k8s-manifests.yaml       # Deployment, Service, HPA, Ingress, CronJob
 │   ├── helm/chatbot/            # Helm chart
