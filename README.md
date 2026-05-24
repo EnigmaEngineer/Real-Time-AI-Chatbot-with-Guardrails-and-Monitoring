@@ -1,8 +1,8 @@
 # AI Chatbot Platform
 
-Production-ready real-time AI chatbot with guardrails, monitoring, drift detection, and A/B testing.
+Production ready real time AI chatbot with guardrails, monitoring, drift detection, and A/B testing.
 
-## 5-Minute Quickstart
+## 5 Minute Quickstart
 
 The only prerequisite is Docker. No GPU, no API keys, no Python install required.
 
@@ -40,11 +40,11 @@ make demo-down
 
 ### What You'll See
 
-The API response includes `guardrail_violations`, `output_confidence`, and `latency_ms` on every request. The Grafana dashboard (auto-provisioned at `http://localhost:3000`) shows SLO gauges, request volume, guardrail triggers by type, A/B variant performance, token cost, and drift scores — all updating in real time.
+The API response includes `guardrail_violations`, `output_confidence`, and `latency_ms` on every request. The Grafana dashboard (auto provisioned at `http://localhost:3000`) shows SLO gauges, request volume, guardrail triggers by type, A/B variant performance, token cost, and drift scores   all updating in real time.
 
 ### API Key Authentication
 
-Set `CHATBOT_API_KEY` to require an `X-API-Key` header on all non-public endpoints:
+Set `CHATBOT_API_KEY` to require an `X-API-Key` header on all non public endpoints:
 
 ```bash
 export CHATBOT_API_KEY=my-secret-key
@@ -186,7 +186,7 @@ abtesting:
           weight: 0.5
 ```
 
-Pass `"experiment": "model_comparison"` in your chat request to enroll users. Assignment is deterministic per user_id — the same user always sees the same variant.
+Pass `"experiment": "model_comparison"` in your chat request to enroll users. Assignment is deterministic per user_id   the same user always sees the same variant.
 
 Generate significance reports:
 
@@ -212,13 +212,13 @@ make backtest
 # treatment     11        0.82           1       48.1ms    0.0987
 # ----------------------------------------------------------------
 #
-# A/B Significance Test — feedback:
+# A/B Significance Test   feedback:
 #   control    vs treatment   ...  p=0.042  ✓ Winner: treatment
 ```
 
 ## Service Level Objectives (SLOs)
 
-### Availability — 99.9%
+### Availability   99.9%
 
 Every non-5xx response counts as successful. The error budget is 0.1% of requests, which at 1,000 req/min translates to **43.2 seconds of downtime per 12-hour window**.
 
@@ -230,7 +230,7 @@ Every non-5xx response counts as successful. The error budget is 0.1% of request
 
 **What counts as an SLO error:** LLM call failure after retry exhaustion, circuit breaker open with no fallback model, any unhandled 5xx. Guardrail blocks (4xx-equivalent) are intentional and do NOT count against the error budget.
 
-### Latency — 95th percentile under 800ms
+### Latency   95th percentile under 800ms
 
 | Metric | Target | PromQL |
 |---|---|---|
@@ -277,7 +277,7 @@ When the error budget is exhausted (burn rate sustained > 1× for the window):
 
 **Root cause:** The Detoxify toxicity model was loaded lazily on first request. Under cold-start conditions with 50 concurrent connections, 50 threads competed to load the same PyTorch model into memory.
 
-**Fix:** Lazy singleton pattern — the toxicity model initializes once on the first call and is reused. Added a warmup request in the container readiness probe so the model loads before traffic arrives. p99 dropped to 180ms.
+**Fix:** Lazy singleton pattern   the toxicity model initializes once on the first call and is reused. Added a warmup request in the container readiness probe so the model loads before traffic arrives. p99 dropped to 180ms.
 
 **Prevention:** The `_get_toxicity_model()` method now uses instance-level caching. The Dockerfile health check ensures the model is warm before Kubernetes routes traffic.
 
@@ -307,16 +307,16 @@ When the error budget is exhausted (burn rate sustained > 1× for the window):
 
 Applied the same observability rigor from our Airflow pipeline monitoring:
 
-1. **Structured JSON logging with correlation IDs** — every request is traceable end-to-end without grep gymnastics.
-2. **Prometheus metrics on every code path** — not just happy paths. Error counters, circuit breaker state, and guardrail trigger rates are all instrumented.
-3. **Grafana dashboards provisioned as code** — no manual dashboard creation. The dashboard JSON ships with the repo and auto-provisions on Grafana startup.
-4. **Drift detection as a CronJob** — runs every 5 minutes independently of the API, so monitoring doesn't compete with serving for resources.
+1. **Structured JSON logging with correlation IDs**   every request is traceable end-to-end without grep gymnastics.
+2. **Prometheus metrics on every code path**   not just happy paths. Error counters, circuit breaker state, and guardrail trigger rates are all instrumented.
+3. **Grafana dashboards provisioned as code**   no manual dashboard creation. The dashboard JSON ships with the repo and auto-provisions on Grafana startup.
+4. **Drift detection as a CronJob**   runs every 5 minutes independently of the API, so monitoring doesn't compete with serving for resources.
 
 ### Incident 5: Detoxify Cache PermissionError in Docker
 
 **Symptom:** Every `POST /chat/strict` request returned 500 Internal Server Error. Grafana panels showed "No data" because no request completed successfully.
 
-**Root cause:** The Dockerfile created the `chatbot` user with `useradd -r` (system user flag), which does not create a home directory. When Detoxify lazy-loaded its toxicity model on the first request, `torch.hub.load_state_dict_from_url` tried to write to `/home/chatbot/.cache/torch/hub/` — a path that didn't exist. The user lacked permission to create it, so every request crashed at the same line.
+**Root cause:** The Dockerfile created the `chatbot` user with `useradd -r` (system user flag), which does not create a home directory. When Detoxify lazy-loaded its toxicity model on the first request, `torch.hub.load_state_dict_from_url` tried to write to `/home/chatbot/.cache/torch/hub/`   a path that didn't exist. The user lacked permission to create it, so every request crashed at the same line.
 
 **Traceback:**
 ```
