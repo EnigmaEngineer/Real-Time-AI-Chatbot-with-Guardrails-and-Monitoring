@@ -24,6 +24,10 @@ from src.guardrails.rpm_limiter import RPMRateLimiter
 from src.abtesting.router import ABRouter, ExperimentRecord
 from src.drift.detector import DriftDetector
 from src.feedback.store import FeedbackStore, FeedbackEntry
+from src.agents.coordinator import AgentCoordinator
+from src.agents.policy import PolicyEngine
+from src.agents.tools.registry import get_default_registry
+from src.agents.audit import AuditStore
 from src.monitoring.metrics import (
     REQUEST_LATENCY,
     REQUEST_TOTAL,
@@ -87,12 +91,16 @@ _feedback: FeedbackStore | None = None
 _rate_limiter: ViolationRateLimiter | None = None
 _rpm_limiter: RPMRateLimiter | None = None
 _vectorstore = None  # VectorStore — lazy import to avoid heavy deps at module level
+_agent: AgentCoordinator | None = None
+_agent_registry = None
+_agent_audit: AuditStore | None = None
 _config: dict = {}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _llm, _ab_router, _drift, _feedback, _rate_limiter, _rpm_limiter, _vectorstore, _config
+    global _llm, _ab_router, _drift, _feedback, _rate_limiter, _rpm_limiter, _vectorstore
+    global _agent, _agent_registry, _agent_audit, _config
     _config = load_config()
 
     BUILD_INFO.info({"version": "1.0.0", "mock_mode": str(_config["llm"].get("mock_mode", False))})
@@ -111,6 +119,25 @@ async def lifespan(app: FastAPI):
         _vectorstore = VectorStore(_config)
         logger.info("VectorStore enabled")
 
+    # Multi-agent subsystem (Week 3)
+    agents_cfg = _config.get("agents", {})
+    if agents_cfg.get("enabled", True):
+        injection_patterns = _config.get("guardrails", {}).get("injection_patterns", [])
+        _agent_registry = get_default_registry(vectorstore=_vectorstore)
+        _agent_audit = AuditStore(db_path=agents_cfg.get("audit_db_path", "data/agent_audit.db"))
+        _agent = AgentCoordinator(
+            llm=_llm,
+            registry=_agent_registry,
+            policy=PolicyEngine(injection_patterns=injection_patterns or None),
+            audit=_agent_audit,
+            max_iterations=int(agents_cfg.get("max_iterations", 5)),
+            max_wall_seconds=float(agents_cfg.get("max_wall_seconds", 15.0)),
+            max_obs_chars=int(agents_cfg.get("max_obs_chars", 8000)),
+            tool_timeout_s=float(agents_cfg.get("tool_timeout_seconds", 10.0)),
+        )
+        logger.info("Agent coordinator enabled",
+                    extra={"tools": [t.name for t in _agent_registry.all_tools()]})
+
     prom_port = _config.get("monitoring", {}).get("prometheus_port", 9090)
     try:
         start_http_server(prom_port)
@@ -126,6 +153,8 @@ async def lifespan(app: FastAPI):
         _feedback.close()
     if _drift:
         _drift.close()
+    if _agent_audit:
+        _agent_audit.close()
     logger.info("Chatbot API shutdown complete")
 
 
@@ -827,3 +856,174 @@ async def ratelimit_status(user_id: str):
 @app.get("/metrics")
 async def metrics():
     return JSONResponse(content=generate_latest().decode(), media_type=CONTENT_TYPE_LATEST)
+
+
+# ── Agent endpoints (Week 3: multi-agent tool use with policy boundaries) ──
+
+
+class AgentRequest(BaseModel):
+    message: str
+    user_id: str = Field(default_factory=lambda: uuid4().hex[:12])
+    conversation_id: str = Field(default_factory=lambda: uuid4().hex)
+    profile: str = "default"  # default | readonly | math_only
+
+
+class AgentToolCallView(BaseModel):
+    iteration: int
+    tool: str
+    args: dict
+    status: str
+    violations: list[str]
+    latency_ms: float
+    output_preview: str
+    error: str = ""
+
+
+class AgentResponse(BaseModel):
+    answer: str
+    trace: list[AgentToolCallView]
+    iterations_used: int
+    terminated_reason: str
+    latency_ms: float
+    guardrail_violations: list[str] = []
+
+
+@app.post("/chat/agent", response_model=AgentResponse)
+async def chat_agent(req: AgentRequest):
+    """ReAct-style agent with tool use. Every tool call is policy-checked
+    and audit-logged. Try to make it call a tool it shouldn't —
+    every blocked attempt shows up at GET /agents/audit."""
+    if not _agent or not _agent_registry:
+        raise HTTPException(status_code=503, detail="Agent subsystem not enabled")
+
+    reset_request_context()
+    trace_id = uuid4().hex[:16]
+    set_trace_id(trace_id)
+    set_user_context(req.user_id)
+
+    # Rate-limit check — agents are expensive, treat them like chat requests.
+    if _rate_limiter and _rate_limiter.is_banned(req.user_id):
+        ban_msg = _config["guardrails"].get("ban_message", "You have been temporarily restricted.")
+        REQUEST_TOTAL.labels(endpoint="/chat/agent", status="rate_limited").inc()
+        return AgentResponse(
+            answer=ban_msg, trace=[], iterations_used=0,
+            terminated_reason="rate_limited", latency_ms=0.0,
+            guardrail_violations=["rate_limited"],
+        )
+
+    # Input guard on the original user message — agents see the same input
+    # filtering as /chat/strict so jailbreak attempts never reach the loop.
+    profile = get_guardrail_profile("strict")
+    input_guard = InputGuard(profile, _config)
+    input_result = input_guard.check(req.message, "strict")
+    if not input_result.passed:
+        if _rate_limiter:
+            _rate_limiter.record_violation(req.user_id)
+        set_guardrail_action("block")
+        REQUEST_TOTAL.labels(endpoint="/chat/agent", status="blocked").inc()
+        logger.info("Agent request blocked at input guard",
+                    extra={"violations": input_result.violations})
+        return AgentResponse(
+            answer=_config["guardrails"]["fallback_message"],
+            trace=[], iterations_used=0,
+            terminated_reason="input_guard",
+            latency_ms=0.0,
+            guardrail_violations=input_result.violations,
+        )
+
+    # Drift tracking sees the input like any other endpoint.
+    if _drift:
+        _drift.record_input(input_result.sanitized_input)
+
+    start = time.monotonic()
+    result = await _agent.run(
+        user_message=input_result.sanitized_input,
+        profile=req.profile,
+        trace_id=trace_id,
+        user_id=req.user_id,
+    )
+
+    # Output guard on the final answer — protects against the agent emitting
+    # banned content even when no individual tool output was flagged.
+    output_guard = OutputGuard(profile)
+    output_result = output_guard.check(result.answer, "strict")
+    output_violations: list[str] = []
+    final_answer = result.answer
+    if not output_result.passed:
+        set_guardrail_action("block")
+        final_answer = _config["guardrails"]["fallback_message"]
+        output_violations = output_result.violations
+        if _rate_limiter:
+            _rate_limiter.record_violation(req.user_id)
+
+    if _drift:
+        _drift.record_output(final_answer, not output_result.passed)
+
+    latency_s = time.monotonic() - start
+    status = "blocked" if output_violations else "ok"
+    REQUEST_TOTAL.labels(endpoint="/chat/agent", status=status).inc()
+    REQUEST_LATENCY.labels(endpoint="/chat/agent", model="agent", status=status).observe(latency_s)
+    if latency_s > LATENCY_THRESHOLD_SECONDS:
+        SLO_LATENCY_VIOLATIONS.inc()
+
+    logger.info(
+        "Agent request completed",
+        extra={
+            "status": status, "endpoint": "/chat/agent",
+            "iterations": result.iterations_used,
+            "terminated_reason": result.terminated_reason,
+            "latency_ms": round(latency_s * 1000, 2),
+        },
+    )
+
+    return AgentResponse(
+        answer=final_answer,
+        trace=[
+            AgentToolCallView(
+                iteration=t.iteration, tool=t.tool, args=t.args, status=t.status,
+                violations=t.violations, latency_ms=round(t.latency_ms, 2),
+                output_preview=t.output_preview, error=t.error,
+            )
+            for t in result.trace
+        ],
+        iterations_used=result.iterations_used,
+        terminated_reason=result.terminated_reason,
+        latency_ms=round(latency_s * 1000, 2),
+        guardrail_violations=output_violations,
+    )
+
+
+@app.get("/agents/tools")
+async def list_agent_tools(profile: str = Query(default="default")):
+    """List tools available to a given profile, with their declared policies."""
+    if not _agent_registry:
+        raise HTTPException(status_code=503, detail="Agent subsystem not enabled")
+    try:
+        tools = _agent_registry.allowed_for(profile)
+    except Exception:
+        tools = []
+    return {
+        "profile": profile,
+        "tools": [
+            {
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.input_schema,
+                "policies": list(t.policies),
+            }
+            for t in tools
+        ],
+    }
+
+
+@app.get("/agents/audit")
+async def agent_audit(
+    limit: int = Query(default=50, ge=1, le=500),
+    status: str = Query(default=""),
+):
+    """Recent agent tool calls. Powers the public 'break it' transparency view:
+    every blocked attempt is visible here, indexed by status."""
+    if not _agent_audit:
+        raise HTTPException(status_code=503, detail="Agent subsystem not enabled")
+    rows = _agent_audit.recent(limit=limit, status=status or None)
+    return {"rows": rows, "stats": _agent_audit.stats()}

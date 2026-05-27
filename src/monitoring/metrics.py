@@ -158,6 +158,40 @@ RPM_REJECTED = Counter(
     "Requests rejected by per-API-key RPM rate limiting",
 )
 
+# ── Agent / tool use ───────────────────────────────────────────────────────
+# Week 3: multi-agent tool use with policy boundaries.
+
+AGENT_TOOL_CALLS = Counter(
+    "chatbot_agent_tool_calls_total",
+    "Tool invocations by the agent coordinator",
+    labelnames=["tool", "status"],  # status: ok | blocked_pre | blocked_post | error
+)
+
+AGENT_TOOL_LATENCY = Histogram(
+    "chatbot_agent_tool_latency_seconds",
+    "Latency of a single tool invocation (excluding policy overhead)",
+    labelnames=["tool"],
+    buckets=(0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+)
+
+AGENT_POLICY_VIOLATIONS = Counter(
+    "chatbot_agent_policy_violations_total",
+    "Per-tool policy violations enforced by the PolicyEngine",
+    labelnames=["tool", "policy"],
+)
+
+AGENT_ITERATIONS = Histogram(
+    "chatbot_agent_iterations",
+    "Number of ReAct iterations consumed per /chat/agent call",
+    buckets=(0, 1, 2, 3, 4, 5, 6, 8, 10),
+)
+
+AGENT_BLOCKED = Counter(
+    "chatbot_agent_blocked_total",
+    "Agent runs terminated for non-answer reasons",
+    labelnames=["reason"],  # max_iterations | timeout | input_guard | output_guard
+)
+
 
 # ── Cost estimation helper ─────────────────────────────────────────────────
 # Prices per 1K tokens.  Override via config if your provider differs.
