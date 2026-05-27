@@ -356,13 +356,70 @@
       "type": "timeseries",
       "gridPos": { "h": 4, "w": 4, "x": 20, "y": 54 },
       "targets": [
-        { "expr": "sum(rate(chatbot_feedback_total{rating='up'}[5m])) * 60", "legendFormat": "👍" },
-        { "expr": "sum(rate(chatbot_feedback_total{rating='down'}[5m])) * 60", "legendFormat": "👎" }
+        { "expr": "sum(rate(chatbot_feedback_total{rating='up'}[5m])) * 60", "legendFormat": "up" },
+        { "expr": "sum(rate(chatbot_feedback_total{rating='down'}[5m])) * 60", "legendFormat": "down" }
+      ]
+    },
+    {
+      "title": "AGENT / TOOL USE (Week 3)",
+      "type": "text",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 58 },
+      "options": { "mode": "markdown", "content": "### Multi-agent tool calls + policy enforcement. Every blocked attempt is visible at GET /agents/audit" }
+    },
+    {
+      "title": "Tool Calls / min by Tool",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 60 },
+      "targets": [
+        { "expr": "sum by (tool) (rate(chatbot_agent_tool_calls_total[5m])) * 60", "legendFormat": "{{tool}}" }
+      ]
+    },
+    {
+      "title": "Policy Violations / min by Policy",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 60 },
+      "targets": [
+        { "expr": "sum by (policy) (rate(chatbot_agent_policy_violations_total[5m])) * 60", "legendFormat": "{{policy}}" }
+      ],
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } } }
+    },
+    {
+      "title": "Tool Call Outcomes",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 60 },
+      "targets": [
+        { "expr": "sum by (status) (rate(chatbot_agent_tool_calls_total[5m])) * 60", "legendFormat": "{{status}}" }
+      ]
+    },
+    {
+      "title": "Agent Iterations p50/p95",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 67 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(chatbot_agent_iterations_bucket[5m])) by (le))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(chatbot_agent_iterations_bucket[5m])) by (le))", "legendFormat": "p95" }
+      ]
+    },
+    {
+      "title": "Tool Latency p95 (s)",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 67 },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (tool, le) (rate(chatbot_agent_tool_latency_seconds_bucket[5m])))", "legendFormat": "{{tool}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "title": "Agent Runs Terminated (non-final)",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 67 },
+      "targets": [
+        { "expr": "sum by (reason) (rate(chatbot_agent_blocked_total[5m])) * 60", "legendFormat": "{{reason}}" }
       ]
     }
   ],
   "schemaVersion": 39,
-  "tags": ["chatbot", "llm", "slo"],
+  "tags": ["chatbot", "llm", "slo", "agent"],
   "templating": { "list": [] },
   "time": { "from": "now-1h", "to": "now" },
   "title": "AI Chatbot Platform",
