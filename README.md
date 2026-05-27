@@ -1,6 +1,6 @@
 # AI Chatbot Platform
 
-Production ready real time AI chatbot with guardrails, monitoring, drift detection, and A/B testing.
+Production ready real time AI chatbot with guardrails, monitoring, drift detection, A/B testing, a RAG pipeline and a multi agent ReAct loop with policy enforced tool use. Everything runs in 5 minutes with `make demo`. One command deploys it to Cloud Run.
 
 ## 5 Minute Quickstart
 
@@ -151,14 +151,80 @@ make deploy-canary IMAGE_NAME=your-registry/chatbot-platform IMAGE_TAG=v1.1.0-rc
 |---|---|---|
 | `/chat/strict` | POST | Chat with strict guardrails |
 | `/chat/creative` | POST | Chat with relaxed guardrails |
+| `/chat/agent` | POST | Multi-agent ReAct loop with policy-enforced tool use |
+| `/agents/tools` | GET | Tools available to a given profile + their policies |
+| `/agents/audit` | GET | Recent tool calls (every blocked attempt is visible) |
 | `/ws/chat/{profile}` | WS | Real-time streaming chat |
 | `/feedback` | POST | Submit thumbs up/down feedback |
 | `/feedback/summary` | GET | Feedback aggregation by variant |
 | `/drift/status` | GET | Current drift detection alerts |
 | `/ab/experiments` | GET | List active experiments |
 | `/ab/results/{name}` | GET | Statistical significance results |
+| `/ingest` | POST | Upload PDF/TXT/MD for the RAG pipeline |
+| `/rag/search` | GET | Semantic search over ingested docs |
 | `/health` | GET | Health check |
 | `/metrics` | GET | Prometheus metrics |
+
+## Multi-Agent Tool Use with Policy Boundaries (Week 3)
+
+`POST /chat/agent` exposes a ReAct-style coordinator that can call tools to answer questions. Every tool call goes through a `PolicyEngine` that runs pre-call and post-call hooks before the result ever reaches the LLM, and every invocation — successful or blocked — is written to a SQLite audit log visible at `GET /agents/audit`.
+
+### Available tools
+
+| Tool | Purpose | Policies enforced |
+|---|---|---|
+| `calculator` | Safe arithmetic via Python AST (no `eval`, no function calls, exponent capped) | `max_arg_length`, `no_pii_in_args` |
+| `rag_search` | Semantic search over ingested documents | `max_arg_length`, `no_pii_in_args`, `injection_scan_output` |
+| `web_fetch` | HTTP GET against a curated host allowlist (Wikipedia, arXiv, MDN, Python docs) | `max_arg_length`, `url_allowlist`, `injection_scan_output` |
+
+### Profiles
+
+| Profile | Tools allowed |
+|---|---|
+| `default` | calculator, rag_search, web_fetch |
+| `readonly` | calculator, rag_search (no outbound network) |
+| `math_only` | calculator |
+
+### Hard safety caps (every cap closes a specific attack class)
+
+| Cap | Default | Attack it defends against |
+|---|---|---|
+| `max_iterations` | 5 | Infinite tool-call loops |
+| `max_wall_seconds` | 15 | Slow-loris-style hostile tools |
+| `max_obs_chars` | 8000 | Context-window flooding via huge fetches |
+| `tool_timeout_seconds` | 10 | One bad tool stalling the whole loop |
+
+### Try it (works against `make demo`)
+
+```bash
+# Tool routing
+curl -s http://localhost:8000/chat/agent \
+  -H 'Content-Type: application/json' \
+  -d '{"message": "calculate (12 + 5) * 3"}' | python3 -m json.tool
+
+# Policy block: URL not on the allowlist
+curl -s http://localhost:8000/chat/agent \
+  -H 'Content-Type: application/json' \
+  -d '{"message": "fetch https://evil.example.com/secret"}' | python3 -m json.tool
+
+# See the blocked attempt in the audit log
+curl -s 'http://localhost:8000/agents/audit?status=blocked_pre' | python3 -m json.tool
+
+# See what tools each profile can call
+curl -s 'http://localhost:8000/agents/tools?profile=math_only' | python3 -m json.tool
+```
+
+The Grafana dashboard gains a new section showing tool-call rate, policy violations by policy name, p95 tool latency, agent-iteration histogram, and non-final termination reasons (timeout, max_iterations, obs_overflow).
+
+## Cloud Run Deployment
+
+```bash
+gcloud auth login
+gcloud config set project YOUR_PROJECT_ID
+make deploy-cloudrun
+```
+
+The deploy script applies a hard `--max-instances=2` cap, runs in `LLM_MOCK_MODE=true` (zero per-request LLM cost), and prints the live URL plus copy-paste curl commands. See [deploy/cloudrun/README.md](deploy/cloudrun/README.md) for the full cost-cap setup and lock-down options.
 
 ## Guardrail Profiles
 
@@ -312,6 +378,16 @@ Applied the same observability rigor from our Airflow pipeline monitoring:
 3. **Grafana dashboards provisioned as code**   no manual dashboard creation. The dashboard JSON ships with the repo and auto-provisions on Grafana startup.
 4. **Drift detection as a CronJob**   runs every 5 minutes independently of the API, so monitoring doesn't compete with serving for resources.
 
+### Incident 6: Agent Iteration Cap vs. Permissive LLM Format Drift (Week 3)
+
+**Symptom:** During development of the multi-agent loop, a small percentage of `/chat/agent` requests ran to the `max_iterations` cap and returned a generic "reached the iteration cap" message instead of a real answer.
+
+**Root cause:** The coordinator parses the LLM reply with a regex that requires either `ACTION: {...}` or `FINAL: <text>`. If the LLM produces a slight format variation — "Action:" lowercase, prose-prefixed JSON, or just a plain answer — the parser fails. The original implementation treated that as an error and re-prompted, burning iterations until the cap was hit.
+
+**Fix:** Loosened the parser to accept whitespace and case variations, and changed the "neither ACTION nor FINAL" branch to treat the reply as a `FINAL` answer rather than re-prompting. This means cosmetic format drift returns a real (if slightly off-spec) answer instead of silently consuming the iteration budget. A `terminated_reason="parse_error"` field is recorded in the trace so prompt tuning can be tracked in the Grafana dashboard rather than disguised as runtime failure.
+
+**Lesson:** Hard caps protect the user (no infinite loops, no runaway costs) but they also hide LLM behaviour problems behind a generic timeout/cap message. Every cap should record *why* it fired in a way that's visible in dashboards, otherwise prompt regression looks like infrastructure failure.
+
 ### Incident 5: Detoxify Cache PermissionError in Docker
 
 **Symptom:** Every `POST /chat/strict` request returned 500 Internal Server Error. Grafana panels showed "No data" because no request completed successfully.
@@ -337,6 +413,17 @@ PermissionError: [Errno 13] Permission denied: '/home/chatbot'
 ```
 ├── src/
 │   ├── api/main.py              # FastAPI + WebSocket + SSE endpoints
+│   ├── agents/                  # Week 3 — multi-agent tool use
+│   │   ├── coordinator.py       # ReAct loop with iteration / wall-clock / obs caps
+│   │   ├── policy.py            # Per-tool pre/post policy engine
+│   │   ├── audit.py             # SQLite audit log of every tool call
+│   │   ├── prompts.py           # System + observation prompt templates
+│   │   └── tools/
+│   │       ├── base.py          # Tool ABC + ToolResult
+│   │       ├── registry.py      # Profile-scoped tool allowlists
+│   │       ├── calculator.py    # AST-walked safe arithmetic
+│   │       ├── rag_search.py    # VectorStore wrapper for the agent
+│   │       └── web_fetch.py     # URL allowlist + byte cap + timeout
 │   ├── guardrails/
 │   │   ├── input_guard.py       # PII (regex + spaCy NER), toxicity, injection
 │   │   ├── output_guard.py      # Banned topics, confidence scoring
@@ -372,12 +459,16 @@ PermissionError: [Errno 13] Permission denied: '/home/chatbot'
 │   ├── test_integration.py      # 87 guardrail, A/B, API, monitoring tests
 │   ├── test_rag_ingest.py       # 27 chunker + ingestion tests
 │   ├── test_vectorstore.py      # 19 ChromaDB search + retrieval tests
+│   ├── test_agent_tools.py      # 16 calculator / web_fetch / rag_search tests
+│   ├── test_agent_policies.py   # 10 policy engine tests (pre + post hooks)
+│   ├── test_agent_coordinator.py # 8 end-to-end ReAct loop tests
 │   └── fixtures/                # Sample docs for testing (TXT, MD, PDF)
 ├── examples/
 │   └── chat.html                # WebSocket + SSE chat client
 ├── deploy/
 │   ├── k8s-manifests.yaml       # Deployment, Service, HPA, Ingress, CronJob
 │   ├── helm/chatbot/            # Helm chart
+│   ├── cloudrun/                # One-command Cloud Run deploy (Week 3)
 │   ├── prometheus.yml           # Scrape config
 │   └── grafana/                 # Dashboard + provisioning
 ├── docs/
