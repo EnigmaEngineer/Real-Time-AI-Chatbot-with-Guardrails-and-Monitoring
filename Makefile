@@ -75,6 +75,9 @@ deploy-canary:
 		--set image.tag=$(IMAGE_TAG)-canary \
 		--set autoscaling.enabled=false
 
+deploy-cloudrun:
+	./deploy/cloudrun/deploy.sh
+
 run:
 	LLM_MOCK_MODE=true uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
 

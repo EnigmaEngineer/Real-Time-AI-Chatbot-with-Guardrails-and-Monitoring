@@ -23,7 +23,11 @@ ENV HOME=/home/chatbot \
 
 EXPOSE 8000 9090
 
-HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"
+# Cloud Run injects $PORT (usually 8080). Default to 8000 for local/docker-compose.
+ENV PORT=8000
 
-ENTRYPOINT ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import httpx, os; httpx.get(f\"http://localhost:{os.environ.get('PORT', '8000')}/health\").raise_for_status()"
+
+# Shell form so $PORT is interpolated at container start.
+ENTRYPOINT ["sh", "-c", "exec uvicorn src.api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
