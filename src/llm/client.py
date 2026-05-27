@@ -49,12 +49,61 @@ class CircuitBreaker:
 
 
 class MockLLMClient:
-    """Deterministic mock for testing without a GPU."""
+    """Deterministic mock for testing without a GPU. Recognizes the agent
+    system prompt and emits ACTION/FINAL replies driven by keywords in the
+    user message, so the demo works in mock mode."""
 
     async def generate(self, messages: list[dict], model: str, **kwargs) -> str:
         await asyncio.sleep(0.05)
+        system = next((m["content"] for m in messages if m["role"] == "system"), "")
+        if "ACTION:" in system and "FINAL:" in system:
+            return self._agent_reply(messages)
         user_msg = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
         return f"Mock response to: {user_msg[:80]}"
+
+    def _agent_reply(self, messages: list[dict]) -> str:
+        import re as _re
+
+        # First user turn is the actual query. Anything after is the loop.
+        user_turns = [m for m in messages if m["role"] == "user"]
+        if not user_turns:
+            return "FINAL: I don't have anything to respond to."
+        query = user_turns[0]["content"].lower()
+
+        # Once we've seen any observation, wrap up.
+        seen_obs = any(
+            isinstance(m["content"], str) and m["content"].startswith("OBSERVATION")
+            for m in messages
+        )
+        if seen_obs:
+            last_obs = next(
+                (m["content"] for m in reversed(messages)
+                 if isinstance(m["content"], str) and m["content"].startswith("OBSERVATION")),
+                "",
+            )
+            return f"FINAL: Based on the tool result, {last_obs[:200]}"
+
+        if any(k in query for k in ("evil_tool", "shell_exec", "filesystem", "rm -rf")):
+            return 'ACTION: {"tool": "evil_tool", "args": {"cmd": "whatever"}}'
+        if "wikipedia" in query or " wiki " in f" {query} ":
+            return ('ACTION: {"tool": "web_fetch", '
+                    '"args": {"url": "https://en.wikipedia.org/wiki/Python_(programming_language)"}}')
+        if "http://" in query or "https://" in query or "fetch " in query:
+            url_match = _re.search(r"https?://\S+", query)
+            url = url_match.group(0) if url_match else "https://example.com/"
+            return f'ACTION: {{"tool": "web_fetch", "args": {{"url": "{url}"}}}}'
+        if any(k in query for k in ("search docs", "find in", "lookup", "rag ")):
+            q = query.replace("search docs", "").replace("find in", "").strip()[:100]
+            return f'ACTION: {{"tool": "rag_search", "args": {{"query": "{q}", "top_k": 3}}}}'
+        if any(k in query for k in ("calculate", "compute", "what is ")) or _re.search(
+            r"\d+\s*[\+\-\*\/]\s*\d+", query
+        ):
+            expr_match = _re.search(r"[\d\.\+\-\*\/\(\)\s]+", query)
+            expr = (expr_match.group(0).strip() if expr_match else "2+2")
+            expr = expr.rstrip("+-*/. ") or "2+2"
+            return f'ACTION: {{"tool": "calculator", "args": {{"expression": "{expr}"}}}}'
+
+        return f"FINAL: {query.strip().capitalize()}. No tool needed."
 
     async def generate_stream(self, messages: list[dict], model: str, **kwargs) -> AsyncIterator[str]:
         response = await self.generate(messages, model, **kwargs)

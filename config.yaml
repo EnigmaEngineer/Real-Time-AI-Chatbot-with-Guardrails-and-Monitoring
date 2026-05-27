@@ -165,3 +165,13 @@ feedback:
   store_backend: "sqlite"
   db_path: "data/feedback.db"
   retention_days: 90
+
+agents:
+  enabled: true
+  default_profile: "default"     # default | readonly | math_only
+  max_iterations: 5
+  max_wall_seconds: 15.0
+  max_obs_chars: 8000
+  tool_timeout_seconds: 10.0
+  audit_db_path: "data/agent_audit.db"
+  # Profile -> allowed tools is defined in src/agents/tools/registry.py.
