@@ -1,0 +1,120 @@
+name: redteam
+
+on:
+  schedule:
+    - cron: "0 9 * * *"   # daily at 09:00 UTC
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "Number of attacks to fire (0 = full library)"
+        required: false
+        default: "0"
+      target_url:
+        description: "Override the target URL (otherwise uses TARGET_URL secret)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  redteam:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install minimal deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install httpx pyyaml pytest
+
+      - name: Resolve target URL
+        id: target
+        run: |
+          if [ -n "${{ github.event.inputs.target_url }}" ]; then
+            echo "url=${{ github.event.inputs.target_url }}" >> $GITHUB_OUTPUT
+          else
+            echo "url=${{ secrets.TARGET_URL }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run red-team
+        id: run
+        env:
+          PYTHONPATH: .
+        continue-on-error: true
+        run: |
+          python -m src.redteam.run \
+            --url "${{ steps.target.outputs.url }}" \
+            --count ${{ github.event.inputs.count || 0 }} \
+            --concurrency 2 \
+            --report-dir reports/
+
+      - name: Write failure stub if run aborted
+        if: steps.run.outcome != 'success'
+        run: |
+          mkdir -p reports
+          date=$(date -u +%Y-%m-%d)
+          ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          cat > reports/redteam-${date}.md <<EOF
+          # Red-team report — ${date} (FAILED)
+
+          **Target:** \`${{ steps.target.outputs.url }}\`
+          **Run:** ${ts}
+
+          The red-team run did not complete. The target was unreachable or
+          the script aborted. No attacks were scored. This stub is committed
+          so the time series remains continuous; treat this day as missing
+          data, not as a defended day.
+          EOF
+          cat > reports/redteam-${date}.json <<EOF
+          {
+            "target_url": "${{ steps.target.outputs.url }}",
+            "timestamp_iso": "${ts}",
+            "status": "failed",
+            "total": 0,
+            "clean_blocks": 0,
+            "breaches": 0,
+            "surprise_breaches": 0,
+            "inconclusive": 0,
+            "errors": 0,
+            "defense_rate": null,
+            "clean_rate": null
+          }
+          EOF
+
+      - name: Update latest symlinks
+        run: |
+          cd reports
+          latest_md=$(ls -1t redteam-*.md | head -n1)
+          latest_json=$(ls -1t redteam-*.json | head -n1)
+          cp "$latest_md" redteam-latest.md
+          cp "$latest_json" redteam-latest.json
+
+      - name: Commit report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports/
+          if git diff --staged --quiet; then
+            echo "no changes to commit"
+            exit 0
+          fi
+          date=$(date -u +%Y-%m-%d)
+          git commit -m "redteam: nightly report ${date} [skip ci]"
+          git push
+
+      - name: Re-raise failure if the run failed
+        if: steps.run.outcome != 'success'
+        run: |
+          echo "Re-raising failure so the workflow status reflects it,"
+          echo "but the report stub has already been committed."
+          exit 1

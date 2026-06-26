@@ -1,14 +1,13 @@
-# CLAUDE.md — Project Context for Claude Code
+# CONTRIBUTING — Project Context and Conventions
 
 Read this file first in every session. It tells you what this project is, how it's
 built, the conventions you must follow, and the rules that keep the build green.
 
 ## What this project is
 
-A production-grade real-time AI chatbot platform built as a portfolio piece. It
-demonstrates AI/Data Engineering depth: guardrails, observability, drift detection,
-A/B testing, and a RAG pipeline. The goal is a polished, credible, human-made-looking
-project that supports job positioning in AI/Data Engineering.
+A production-grade real-time AI chatbot platform: guardrails, observability, drift
+detection, A/B testing, and a RAG pipeline. The goal is a polished, well-tested,
+well-documented v1.0.
 
 Repository: https://github.com/EnigmaEngineer/chatbot-platform
 
@@ -99,7 +98,8 @@ demo/                    Self-contained docker-compose demo stack
 
 ## Hard rules (DO NOT VIOLATE)
 
-- Do NOT push directly. Make commits locally; the human reviews and pushes.
+- Commit and push to `main` daily. The safety net is that you NEVER commit red
+  (failing tests trigger a revert before any commit), so `main` stays green.
 - Do NOT edit files under `tests/fixtures/` except to add new fixtures.
 - Do NOT change the public API contract of existing endpoints without updating
   every caller and test.
@@ -107,6 +107,37 @@ demo/                    Self-contained docker-compose demo stack
 - Do NOT delete or rewrite git history.
 - If a task is ambiguous, make the smallest reasonable assumption, state it in the
   commit body, and proceed. Don't stall.
+
+## Commit hygiene
+
+Small, reviewable, consistently styled commits keep history clean and `main` stable.
+
+- **Keep commit messages clean:** the repo's git author, no co-author lines or tool
+  trailers, no emoji. Use `--no-verify` if a hook tries to append a trailer.
+- **No emoji in commit messages.** Lowercase imperative subject, plain body.
+- **One focused commit per task.** Never batch multiple days into one commit.
+- **Never commit failing code.** If tests are red, fix or revert — never commit red.
+- Commit messages describe WHAT and WHY in a human voice, not "implemented the day 7
+  task from the plan." Write as the engineer who built it would.
+
+## Autonomous / unattended run rules (when run on a schedule)
+
+If this session is an unattended scheduled run (no human watching), additionally:
+
+- **Setup:** install only `pip install ".[dev]"` and
+  `python -m spacy download en_core_web_sm || true`. Do NOT install the `prod`/detoxify
+  extras — tests use fallbacks, and detoxify pulls multi-GB CUDA libs that can exhaust
+  disk. If install fails (e.g. no disk space), STOP and report; do not proceed.
+- **Failure branch:** run the full suite. If anything fails, attempt at most ONE
+  focused fix. If still red, revert all changes, leave the working tree clean, and
+  report. NEVER commit or push red.
+- **Test count guard:** the passing test count must be >= the prior baseline. A drop
+  means something regressed — treat as failure.
+- **Push to main:** after committing green, push to `origin main`. If rejected because
+  the remote moved, `git pull --rebase origin main` then push again. Then stop and
+  report.
+- **Stop when done:** if every day in the plan is checked `[x]`, report
+  "plan complete" and stop. Do not loop or invent work.
 
 ## Definition of done (per task)
 
@@ -120,12 +151,21 @@ A task is done when ALL of these are true:
 
 ## Daily workflow
 
-The file `DEV_PLAN_30_DAYS.md` has one task per day. Each session:
-1. Read this file (CLAUDE.md) and `DEV_PLAN_30_DAYS.md`.
-2. Find today's task (the first unchecked `[ ]` day).
-3. Implement it following the per-day spec and the conventions above.
-4. Run the full test suite. Fix anything that breaks.
-5. Commit locally with the message from the day's spec.
-6. Mark the day `[x]` in `DEV_PLAN_30_DAYS.md` and commit that too.
-7. Print a summary: what changed, test count, what to review, and the exact
-   `git push` command the human should run.
+The file `ROADMAP.md` has one task per day. Each session:
+1. Read this file (CLAUDE.md) and `ROADMAP.md`.
+2. Run setup if deps are missing (see autonomous rules above).
+3. Find today's task: the FIRST `### [ ] Day N` header that is still unchecked.
+   IMPORTANT: only the `### [ ] Day N` headers are tasks. IGNORE the "Progress
+   tracker" section at the bottom — those checkboxes are a visual summary, not tasks.
+4. Verify the previous day's work is actually present (its files exist, its tests are
+   in the suite). If the prior day looks incomplete, STOP and report — don't build on
+   broken ground.
+5. Implement today's task following its spec and the conventions above.
+6. Run the full test suite. Fix anything that breaks (one focused attempt; revert if
+   still red).
+7. Commit on `main` with the day's message — NO AI attribution trailer.
+8. Mark the day `[x]` in `ROADMAP.md` and amend it into the same commit.
+9. Push to `origin main` (rebase if the remote moved). Print a summary: what changed,
+   test count (must be >= baseline), and confirm the push succeeded.
+
+If all days are already `[x]`, report "plan complete" and stop.

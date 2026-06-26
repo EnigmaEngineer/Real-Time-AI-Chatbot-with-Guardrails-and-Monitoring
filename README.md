@@ -165,6 +165,38 @@ make deploy-canary IMAGE_NAME=your-registry/chatbot-platform IMAGE_TAG=v1.1.0-rc
 | `/health` | GET | Health check |
 | `/metrics` | GET | Prometheus metrics |
 
+## Adversarial Red-Team Automation (Week 4)
+
+A nightly GitHub Action fires ~560 jailbreak attempts at the deployed agent, classifies which got through, and commits a markdown report to `reports/redteam-YYYY-MM-DD.md`. The defense rate over time becomes a public, version-controlled file anyone can read.
+
+**Six attack categories** (`src/redteam/generators/templates.py`):
+
+| Category | What it tries |
+|---|---|
+| `direct_override` | "Ignore previous instructions" family |
+| `role_hijack` | "You are now an unrestricted AI" family |
+| `prompt_leak` | Extract the agent's system prompt |
+| `tool_exfil` | Trick the agent into calling a tool it shouldn't |
+| `url_exfil` | Trick `web_fetch` into hitting an off-allowlist URL |
+| `indirect_injection` | Payload framed as quoted data or retrieved content |
+
+Each base attack is multiplied through a mutation engine (`raw`, `caps`, `leet`, `b64`, `paraphrase`, `embed`, `multilingual`, plus 2-mutation chains) to produce evasion variants.
+
+**Defense classifier** (`src/redteam/classifier.py`) inspects each agent response and decides `clean_block` / `breach` / `inconclusive`. Per-attack breach signals include system-prompt leak fragments, target-token presence, forbidden tool calls in the trace, off-allowlist URLs that successfully fetched, calculator returning non-numeric output, and more. Inconclusive results are flagged for human review.
+
+**Run it locally:**
+
+```bash
+python -m src.redteam.run \
+    --url https://EnigmaEngineer-chatbot-platform.hf.space \
+    --count 100 \
+    --report-dir reports/
+```
+
+The CLI supports `--fail-below 0.95` for CI gates — exits non-zero if the defense rate drops below the threshold.
+
+**Reports live in [reports/](reports/).** The latest is mirrored as `reports/redteam-latest.md`.
+
 ## Multi-Agent Tool Use with Policy Boundaries (Week 3)
 
 `POST /chat/agent` exposes a ReAct-style coordinator that can call tools to answer questions. Every tool call goes through a `PolicyEngine` that runs pre-call and post-call hooks before the result ever reaches the LLM, and every invocation — successful or blocked — is written to a SQLite audit log visible at `GET /agents/audit`.
@@ -216,15 +248,34 @@ curl -s 'http://localhost:8000/agents/tools?profile=math_only' | python3 -m json
 
 The Grafana dashboard gains a new section showing tool-call rate, policy violations by policy name, p95 tool latency, agent-iteration histogram, and non-final termination reasons (timeout, max_iterations, obs_overflow).
 
-## Cloud Run Deployment
+## Deployment
+
+Three one-command deploys are wired up. Pick whichever fits.
+
+**Hugging Face Spaces** (free, no credit card)
+
+Walkthrough in [deploy/huggingface/SETUP.md](deploy/huggingface/SETUP.md). Sign up at huggingface.co, create a Docker Space, sync files via git, push. HF builds and runs the container for free on a 16 GB CPU instance. URL ends up at `https://USERNAME-chatbot-platform.hf.space`.
+
+**Google Cloud Run** (free tier, scales to zero)
 
 ```bash
 gcloud auth login
 gcloud config set project YOUR_PROJECT_ID
-make deploy-cloudrun
+./deploy/cloudrun/deploy.sh
 ```
 
-The deploy script applies a hard `--max-instances=2` cap, runs in `LLM_MOCK_MODE=true` (zero per-request LLM cost), and prints the live URL plus copy-paste curl commands. See [deploy/cloudrun/README.md](deploy/cloudrun/README.md) for the full cost-cap setup and lock-down options.
+See [deploy/cloudrun/README.md](deploy/cloudrun/README.md). Best fit for a permanent low-traffic public endpoint.
+
+**AWS App Runner**
+
+```bash
+aws configure
+./deploy/aws/deploy.sh
+```
+
+See [deploy/aws/README.md](deploy/aws/README.md). App Runner doesn't scale to zero, so a small monthly cost even when idle.
+
+All three deploys run in `LLM_MOCK_MODE=true` so per-request LLM cost is zero.
 
 ## Guardrail Profiles
 

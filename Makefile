@@ -78,6 +78,9 @@ deploy-canary:
 deploy-cloudrun:
 	./deploy/cloudrun/deploy.sh
 
+deploy-aws:
+	./deploy/aws/deploy.sh
+
 run:
 	LLM_MOCK_MODE=true uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
 

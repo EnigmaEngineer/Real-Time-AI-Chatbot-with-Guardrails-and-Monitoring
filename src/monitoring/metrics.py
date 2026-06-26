@@ -192,6 +192,35 @@ AGENT_BLOCKED = Counter(
     labelnames=["reason"],  # max_iterations | timeout | input_guard | output_guard
 )
 
+# ── Red-team / adversarial automation (Week 4) ────────────────────────────
+
+REDTEAM_ATTEMPTS = Counter(
+    "chatbot_redteam_attempts_total",
+    "Red-team attack attempts fired against the agent",
+    labelnames=["category", "mutation", "verdict"],
+)
+
+REDTEAM_BREACHES = Counter(
+    "chatbot_redteam_breaches_total",
+    "Red-team attacks that bypassed defenses",
+    labelnames=["category", "signal"],
+)
+
+REDTEAM_DEFENSE_RATE = Gauge(
+    "chatbot_redteam_defense_rate",
+    "Latest defense rate (clean_blocks / (clean_blocks + breaches))",
+)
+
+REDTEAM_LAST_RUN_TIMESTAMP = Gauge(
+    "chatbot_redteam_last_run_timestamp_seconds",
+    "Unix timestamp of the most recent red-team run",
+)
+
+REDTEAM_SECONDS_SINCE_LAST_BREACH = Gauge(
+    "chatbot_redteam_seconds_since_last_breach",
+    "Wall-clock seconds since the most recent observed breach",
+)
+
 
 # ── Cost estimation helper ─────────────────────────────────────────────────
 # Prices per 1K tokens.  Override via config if your provider differs.

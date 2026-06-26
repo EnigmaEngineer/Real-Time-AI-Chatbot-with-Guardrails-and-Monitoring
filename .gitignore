@@ -13,3 +13,22 @@ data/
 venv/
 node_modules/
 
+
+LINKEDIN_MILESTONES_LOCAL.md
+
+LINKEDIN_MILESTONES_LOCAL.md
+
+LINKEDIN_MILESTONES_LOCAL.md
+docs/linkedin_*.md
+.gitignore~
+New folder/
+pytest-cache-files-*/
+reports/
+
+LINKEDIN_MILESTONES_LOCAL.md
+docs/linkedin_*.md
+.gitignore~
+New folder/
+pytest-cache-files-*/
+reports/
+__pycache__/

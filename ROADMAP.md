@@ -1,20 +1,64 @@
-# DEV_PLAN_30_DAYS.md — 30-Day Build Plan
+# ROADMAP — 30-Day Build Plan toward v1.0
 
-This is a day-by-day plan for Claude Code to execute, one task per working day,
-building toward a finished, publishable v1.0 of the chatbot platform. Each day is a
-focused commit. Each week ends with a LinkedIn milestone for the human to post.
+A day-by-day engineering plan, one task per working day, building toward a finished
+v1.0 of the chatbot platform. Each day is a focused commit. Each week closes a
+coherent milestone.
 
-**How to use this file (Claude Code):** Read `CLAUDE.md` first. Then find the first
-unchecked day below (`[ ]`), implement exactly that day's task, run the full test
-suite, commit, mark the day `[x]`, and print a summary. Do ONE day per session unless
-told otherwise.
+**How to use this file:** Read `CONTRIBUTING.md` first for conventions, then follow
+the EXECUTION RULES below. Do ONE day per working session.
+
+---
+
+## EXECUTION RULES (read before doing anything)
+
+These rules are mandatory on every run, especially unattended scheduled runs.
+
+1. **Setup (if deps missing):** `pip install ".[dev]"` then
+   `python -m spacy download en_core_web_sm || true`. Do NOT install detoxify/`prod`
+   extras — tests use fallbacks and detoxify pulls multi-GB libs that exhaust disk.
+   If install fails on disk space, STOP and report. Do not proceed.
+
+2. **Find today's task:** the FIRST `### [ ] Day N` header still unchecked. ONLY those
+   headers are tasks. IGNORE the "Progress tracker" section at the bottom — it's a
+   visual summary, not a task list. If every day is `[x]`, report "plan complete" and
+   STOP. Never loop or invent work.
+
+3. **Check prerequisites:** confirm the previous day's work actually exists in the code
+   (its files are present, its tests are in the suite). If the prior day looks
+   incomplete, STOP and report — do not build on broken ground.
+
+4. **Implement** exactly today's spec. No more, no less.
+
+5. **Test:** `LLM_MOCK_MODE=true CHATBOT_API_KEY= python -m pytest tests/ -v`. The
+   passing count must be >= the baseline recorded at Day 0. If anything fails: ONE
+   focused fix attempt; if still red, revert everything, leave the tree clean, report
+   the failure. NEVER commit red.
+
+6. **Commit (only if green):** directly on `main`. Use the day's exact commit
+   message. Keep messages clean: the repo's git author, no co-author or tool trailers,
+   no emoji. Use `--no-verify` if a hook tries to append a trailer.
+
+7. **Mark done:** set the day to `[x]` here and amend into the same commit.
+
+8. **Push to main.** After committing, push to `origin main`. If the push is rejected
+   because the remote moved, run `git pull --rebase origin main` then push again. Then
+   STOP. Report: what you built, the test count, and confirm the push succeeded.
+
+Safety net: the rule that you NEVER commit red (step 5) is what protects `main`. Broken
+code can't land because failing tests trigger a revert before any commit happens.
+
+Why these rules: commits should be small, reviewable, and consistently styled, and
+`main` must always stay green. Failing tests trigger a revert before any commit, so a
+bad change never lands.
+
+---
 
 **Starting point (already done — do NOT redo):**
 - FastAPI + WebSocket + SSE, three guardrail layers, A/B testing, drift detection,
   Prometheus/Grafana/SLO, RAG ingestion (chunker + ingest + ChromaDB vectorstore).
 - 133 tests passing. We are at Week 4 of the broader roadmap.
 
-**Cadence:** ~5 working days per week, Monday–Friday. Weekends are buffer/LinkedIn.
+**Cadence:** ~5 working days per week, Monday–Friday. Weekends are buffer.
 Each day assumes the previous day is committed and the suite is green.
 
 ---
@@ -114,12 +158,6 @@ under hybrid; compare recall on the eval set, assert hybrid >= semantic.
 **Acceptance:** suite green; README RAG section complete.
 **Commit:** `add document management endpoints and RAG quickstart docs`
 
-> **LINKEDIN MILESTONE — WEEK 1 (Friday/Saturday):**
-> Build-log post: "RAG that actually cites its sources." Show the citations feature.
-> Angle: most RAG demos answer confidently with no provenance; yours shows exactly
-> which chunk each claim came from, with retrieval-quality numbers (precision@5) to
-> back it. Screenshot: a chat response with citations + the eval table.
-> Hashtags: #LLMOps #RAG #AIInfrastructure
 
 ---
 
@@ -186,11 +224,6 @@ prompt for turn 2 contains turn 1.
 **Acceptance:** suite green; history persists across store re-open.
 **Commit:** `add conversation persistence with sqlite store`
 
-> **LINKEDIN MILESTONE — WEEK 2:**
-> Build-log post: "Swappable LLM backends + real token accounting." Angle: the model
-> is a plugin, not the point. Show the provider config switch (mock → ollama → openai)
-> and the cost-per-conversation metric now driven by real tiktoken counts.
-> Hashtags: #LLMOps #AIInfrastructure #MLOps
 
 ---
 
@@ -258,12 +291,6 @@ is accepted.
 **Acceptance:** suite green; draining state observable.
 **Commit:** `add graceful shutdown with connection draining`
 
-> **LINKEDIN MILESTONE — WEEK 3:**
-> Thesis-ish post: "Guardrails: when rules beat ML, and when they don't." Show the
-> hybrid injection classifier and NLI hallucination check. Angle: you don't reach for
-> a model first — you start with rules, measure, then add ML only where it moves the
-> precision/recall numbers. Include a before/after on the eval set.
-> Hashtags: #LLMOps #AISafety #MLOps
 
 ---
 
@@ -324,12 +351,6 @@ and cost budgets — the SRE-credible layer.
 **Acceptance:** suite green; anomaly gauge exposed.
 **Commit:** `add ewma z-score anomaly detection on key metrics`
 
-> **LINKEDIN MILESTONE — WEEK 4:**
-> Build-log post: "You can't run AI in prod blind." Show the Jaeger trace of a single
-> request flowing through every layer, plus the TTFT panel and cost breakdown. Angle:
-> observability isn't a dashboard you add at the end — it's a trace ID threaded through
-> every decision the system makes.
-> Hashtags: #Observability #LLMOps #SRE
 
 ---
 
@@ -390,16 +411,9 @@ dead code (vulture), tighten startup time, ensure `make demo` cold-starts fast.
 ### [ ] Day 30 — v1.0.0 release
 **Files:** `CHANGELOG.md`, git tag
 **Implement:** final full-suite run; tag `v1.0.0`; release notes summarizing every
-subsystem. Print the GitHub Release steps for the human.
+subsystem. Print the GitHub Release steps.
 **Commit:** `release v1.0.0`
 
-> **LINKEDIN MILESTONE — WEEK 5/6 (LAUNCH):**
-> The big one. "I built a production AI platform in public over 6 weeks. Here's
-> everything in it, and it runs in 5 minutes." Carousel: architecture, guardrails,
-> RAG with citations, observability/tracing, cost control, the eval numbers, and the
-> 5-minute demo. Link the v1.0.0 release. This is the post the whole series was
-> building toward — reference the earlier build-logs so it reads as a journey with
-> receipts. Hashtags: #LLMOps #AIInfrastructure #RAG #Observability
 
 ---
 
@@ -411,4 +425,4 @@ Week 3: [ ][ ][ ][ ][ ]   ML guardrails + auth + cache
 Week 4: [ ][ ][ ][ ][ ]   Tracing + cost + anomalies
 Week 5+:[ ][ ][ ][ ][ ][ ][ ][ ][ ][ ]   Polish + v1.0.0
 
-When all boxes are checked, the project is v1.0 and every week has shipped a LinkedIn post.
+When all boxes are checked, the project is v1.0.
